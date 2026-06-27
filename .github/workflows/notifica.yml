@@ -1,0 +1,35 @@
+name: Notifiche push (ntfy)
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # ogni 15 minuti (GitHub può ritardare)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dipendenze
+        run: pip install requests beautifulsoup4
+
+      # memoria tra un giro e l'altro (cosa è già stato notificato)
+      - name: Ripristina stato
+        uses: actions/cache@v4
+        with:
+          path: ntfy_state.json
+          key: ntfy-state-${{ github.run_id }}
+          restore-keys: ntfy-state-
+
+      - name: Controlla e notifica
+        env:
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+        run: python push_ntfy.py
