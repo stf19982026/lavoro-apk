@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Rassegna Normativa Lavoro — app mobile (Flet) per APK Android
-=============================================================
+Rassegna Normativa Lavoro — app mobile (Flet), API Flet 0.85
 Riusa core_lavoro.py (fonti + scraper).
-Test su desktop:  flet run
-Build APK:        flet build apk   (richiede Flutter + Android SDK)
-
-Limite onesto su Android: l'aggiornamento automatico vale mentre l'app è in
-primo piano; refresh in background + notifiche richiedono un foreground
-service nativo (non incluso). Verificato con Flet 0.85; se usi una versione
-diversa qualche nome dell'API potrebbe cambiare.
 """
 
 import threading
 import time
+import traceback
 import datetime as dt
 
 import flet as ft
@@ -43,34 +36,50 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = PAPER
     page.padding = 0
+    try:
+        _build(page)
+    except Exception:
+        # rete di sicurezza: mostra l'errore a schermo invece del bianco
+        page.controls.clear()
+        page.scroll = "auto"
+        page.add(ft.Container(
+            ft.Text("ERRORE AVVIO APP:\n\n" + traceback.format_exc(),
+                    selectable=True, size=12, color="#b00020"),
+            padding=16))
+        page.update()
 
+
+def _build(page: ft.Page):
     stato = {"items": [], "off": set(), "term": "", "sort": "desc", "loading": False}
     nuovi_uid = set()
+    store = getattr(page, "client_storage", None)
 
     def carica_visti():
         try:
-            v = page.client_storage.get("visti")
+            v = store.get("visti") if store else None
             return set(v) if v else set()
         except Exception:
             return set()
 
     def salva_visti(uids):
         try:
-            page.client_storage.set("visti", list(uids))
+            if store:
+                store.set("visti", list(uids))
         except Exception:
             pass
 
-    search = ft.TextField(hint_text="Cerca…", dense=True, filled=True, bgcolor=CARD,
-                          border_radius=10, border_color=LINE, content_padding=12,
+    # ---- controlli ----
+    search = ft.TextField(hint_text="Cerca…", filled=True, bgcolor=CARD,
+                          border_radius=10, border_color=LINE,
                           on_change=lambda e: (stato.update(term=e.control.value or ""), render()))
-    sort = ft.Dropdown(width=160, dense=True, value="desc",
+    sort = ft.Dropdown(width=160, value="desc",
                        options=[ft.dropdown.Option("desc", "Più recenti"),
                                 ft.dropdown.Option("asc", "Meno recenti")],
-                       on_change=lambda e: (stato.update(sort=e.control.value), render()))
+                       on_select=lambda e: (stato.update(sort=e.control.value), render()))
     chips_row = ft.Row(wrap=True, spacing=6, run_spacing=6)
-    lista = ft.ListView(expand=True, spacing=9, padding=12)
+    lista = ft.Column(spacing=9, scroll="auto", expand=True)
     status = ft.Text("", size=11, color=INK_SOFT)
-    refresh_btn = ft.IconButton(_ic("REFRESH"), tooltip="Aggiorna",
+    refresh_btn = ft.IconButton(_ic("REFRESH"), tooltip="Aggiorna", icon_color=INK,
                                 on_click=lambda e: refresh())
 
     page.appbar = ft.AppBar(
@@ -139,9 +148,8 @@ def main(page: ft.Page):
         if rows:
             lista.controls = [card(it) for it in rows[:300]]
         else:
-            lista.controls = [ft.Container(
-                ft.Text("Nessun documento corrisponde ai filtri.", color=INK_SOFT,
-                        text_align=ft.TextAlign.CENTER), padding=30)]
+            msg = "Caricamento…" if stato["loading"] else "Nessun documento."
+            lista.controls = [ft.Container(ft.Text(msg, color=INK_SOFT), padding=24)]
         status.value = "{} documenti · aggiornato {}".format(
             len(stato["items"]), dt.datetime.now().strftime("%d/%m/%Y %H:%M"))
         page.update()
@@ -151,8 +159,8 @@ def main(page: ft.Page):
             return
         stato["loading"] = True
         refresh_btn.icon = _ic("HOURGLASS_EMPTY")
-        page.update()
-        threading.Thread(target=_worker, daemon=True).start()
+        render()
+        page.run_thread(_worker)
 
     def _worker():
         nonlocal nuovi_uid
@@ -172,14 +180,20 @@ def main(page: ft.Page):
     def loop_auto():
         while True:
             time.sleep(INTERVALLO_MIN * 60)
-            refresh()
+            try:
+                refresh()
+            except Exception:
+                pass
 
+    # layout: niente ListView(expand) problematico, uso Column scrollabile
     page.add(
-        ft.Container(ft.Column([search, ft.Row([sort], spacing=8), chips_row], spacing=8),
+        ft.Container(ft.Column([search, ft.Row([sort]), chips_row], spacing=8),
                     padding=ft.Padding(left=12, top=8, right=12, bottom=4)),
         ft.Divider(height=1, color=LINE),
-        lista,
-        ft.Container(status, padding=ft.Padding(left=14, top=6, right=14, bottom=6)))
+        ft.Container(lista, expand=True, padding=ft.Padding(left=10, top=4, right=10, bottom=0)),
+        ft.Container(status, padding=ft.Padding(left=14, top=6, right=14, bottom=6)),
+    )
+    page.update()
 
     refresh()
     threading.Thread(target=loop_auto, daemon=True).start()
