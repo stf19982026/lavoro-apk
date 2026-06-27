@@ -101,16 +101,31 @@ def _build(page: ft.Page):
         stato["off"].discard(ente) if ente in stato["off"] else stato["off"].add(ente)
         build_chips(); render()
 
+    def chip(ente, color):
+        sel = ente not in stato["off"]
+        dot = ft.Container(width=9, height=9, bgcolor=color, border_radius=20)
+        return ft.Container(
+            content=ft.Row([dot, ft.Text(ente, size=12, weight=ft.FontWeight.W_600,
+                                         color=INK if sel else INK_SOFT)], spacing=7),
+            bgcolor=CARD, padding=ft.Padding(left=11, top=7, right=12, bottom=7),
+            border_radius=20, opacity=1 if sel else 0.45,
+            border=border_all(color, 1.5) if sel else border_all(LINE, 1),
+            on_click=lambda e, en=ente: toggle(en))
+
     def build_chips():
         controls = [ft.TextButton("Tutte", on_click=lambda e: set_all(True)),
                     ft.TextButton("Nessuna", on_click=lambda e: set_all(False))]
         for ente, color in enti_presenti():
-            controls.append(ft.Chip(
-                label=ft.Text(ente, size=12), bgcolor=CARD, selected_color=color,
-                selected=(ente not in stato["off"]), show_checkmark=False,
-                on_select=lambda e, en=ente: toggle(en)))
+            controls.append(chip(ente, color))
         chips_row.controls = controls
         page.update()
+
+    def apri(u):
+        if u:
+            try:
+                page.launch_url(u)
+            except Exception:
+                pass
 
     def card(it):
         badge = ft.Container(
@@ -121,17 +136,23 @@ def _build(page: ft.Page):
             ft.Text("NUOVO", size=9, color="white", weight=ft.FontWeight.BOLD),
             bgcolor="#b0306a", padding=ft.Padding(left=6, top=1, right=6, bottom=1),
             border_radius=5, visible=it["uid"] in nuovi_uid)
+        apri_btn = ft.IconButton(_ic("OPEN_IN_NEW"), icon_size=16, icon_color=INK_SOFT,
+                                 tooltip="Apri nel browser",
+                                 on_click=lambda e, u=it["url"]: apri(u))
         top = ft.Row(
             [ft.Row([badge, ft.Text(it["categoria"], size=11, color=INK_SOFT)], spacing=6),
-             ft.Row([ft.Text(it["data_label"], size=11, color=INK_SOFT), nuovo], spacing=6)],
+             ft.Row([ft.Text(it["data_label"], size=11, color=INK_SOFT), nuovo, apri_btn], spacing=4)],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
         col = [top, ft.Text(it["titolo"], size=15, weight=ft.FontWeight.W_600, color=INK)]
         if it["summary"]:
             col.append(ft.Text(it["summary"], size=13, color=INK_SOFT))
-        return ft.Container(
+        cont = ft.Container(
             content=ft.Column(col, spacing=5), bgcolor=CARD,
-            border=border_all(LINE), border_radius=11, padding=14, ink=True,
-            on_click=(lambda e, u=it["url"]: page.launch_url(u)) if it["url"] else None)
+            border=border_all(LINE), border_radius=11, padding=14)
+        # GestureDetector: il tap sull'intera scheda apre il link in modo affidabile
+        return ft.GestureDetector(
+            on_tap=lambda e, u=it["url"]: apri(u),
+            content=cont, mouse_cursor=ft.MouseCursor.CLICK)
 
     def render():
         term = stato["term"].strip().lower()
