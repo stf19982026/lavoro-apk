@@ -5,7 +5,7 @@ core_lavoro — strato dati condiviso (nessuna GUI, nessun pip a runtime)
 ======================================================================
 Fonti + scraper + raccogli(): riusato da app desktop, generatore web/PWA
 e app mobile (Flet/Kivy). Dipendenze (puro-Python, impacchettabili in APK):
-feedparser, requests, beautifulsoup4.
+requests, beautifulsoup4 (puro-Python, con wheel).
 """
 
 import re
@@ -13,9 +13,10 @@ import json
 import datetime as dt
 from urllib.parse import quote_plus
 
-import feedparser
 import requests
 from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 
 
 def gnews(query):
@@ -103,14 +104,6 @@ def parse_data_estesa(testo):
     return None
 
 
-def da_struct_time(st):
-    if not st:
-        return None
-    try:
-        return dt.datetime(*st[:6])
-    except (TypeError, ValueError):
-        return None
-
 
 def ripulisci(testo, limite=240):
     testo = re.sub(r"<[^>]+>", "", testo or "")
@@ -120,19 +113,59 @@ def ripulisci(testo, limite=240):
     return testo
 
 
+ATOM = "{http://www.w3.org/2005/Atom}"
+DC = "{http://purl.org/dc/elements/1.1/}"
+
+
+def _txt(el):
+    return (el.text or "").strip() if el is not None else ""
+
+
+def _data_feed(s):
+    if not s:
+        return None
+    try:
+        d = parsedate_to_datetime(s)
+        if d:
+            return d.replace(tzinfo=None)
+    except Exception:
+        pass
+    return parse_data_iso(s)
+
+
 def fetch_rss(src):
+    """Legge RSS 2.0 o Atom con la libreria standard (niente feedparser)."""
+    r = requests.get(src["url"], headers=HEADERS, timeout=TIMEOUT)
+    r.raise_for_status()
+    try:
+        root = ET.fromstring(r.content)
+    except ET.ParseError:
+        return []
     items = []
-    feed = feedparser.parse(src["url"], request_headers=HEADERS)
-    if not feed.entries and getattr(feed, "status", 200) >= 400:
-        raise RuntimeError("HTTP {}".format(feed.status))
-    for e in feed.entries:
-        data = da_struct_time(getattr(e, "published_parsed", None)) \
-            or da_struct_time(getattr(e, "updated_parsed", None)) \
-            or parse_data_estesa(getattr(e, "title", "")) \
-            or parse_data_estesa(getattr(e, "summary", ""))
-        items.append(make_item(src, ripulisci(getattr(e, "title", ""), 200),
-                               getattr(e, "link", src["url"]), data,
-                               ripulisci(getattr(e, "summary", ""))))
+    rss_items = root.findall(".//item")
+    if rss_items:
+        for it in rss_items:
+            titolo = _txt(it.find("title"))
+            link = _txt(it.find("link")) or src["url"]
+            desc = _txt(it.find("description"))
+            pub = _txt(it.find("pubDate")) or _txt(it.find(DC + "date"))
+            data = _data_feed(pub) or parse_data_estesa(titolo) or parse_data_estesa(desc)
+            items.append(make_item(src, ripulisci(titolo, 200), link, data, ripulisci(desc)))
+    else:
+        for e in root.findall(".//" + ATOM + "entry"):
+            titolo = _txt(e.find(ATOM + "title"))
+            link = ""
+            for l in e.findall(ATOM + "link"):
+                if (l.get("rel") in (None, "alternate")) and l.get("href"):
+                    link = l.get("href")
+                    break
+            if not link:
+                le = e.find(ATOM + "link")
+                link = le.get("href") if le is not None else src["url"]
+            desc = _txt(e.find(ATOM + "summary")) or _txt(e.find(ATOM + "content"))
+            pub = _txt(e.find(ATOM + "published")) or _txt(e.find(ATOM + "updated"))
+            data = _data_feed(pub) or parse_data_estesa(titolo) or parse_data_estesa(desc)
+            items.append(make_item(src, ripulisci(titolo, 200), link or src["url"], data, ripulisci(desc)))
     return items
 
 
