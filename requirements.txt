@@ -1,0 +1,4 @@
+flet
+feedparser
+requests
+beautifulsoup4
