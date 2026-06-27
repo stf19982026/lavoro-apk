@@ -33,7 +33,7 @@ jobs:
         run: pip install flet
 
       - name: Costruisci APK
-        run: flet build apk --verbose
+        run: flet build apk --verbose --assume-yes
 
       - name: Raccogli l'APK
         run: |
