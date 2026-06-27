@@ -16,40 +16,24 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "8"
+          java-version: "17"
 
       - uses: android-actions/setup-android@v3
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+      - name: Installa Flet
+        run: pip install flet
 
-      - name: Install Android SDK components and accept licenses
-        run: |
-          set -e
-          # Accept licenses (may return non-zero; continue to ensure licenses are accepted)
-          yes | $ANDROID_SDK_ROOT/tools/bin/sdkmanager --licenses || true
-          # Install commonly required SDK components for Flutter / Flet packaging
-          $ANDROID_SDK_ROOT/tools/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-
-      - name: Prepare Python packaging tools and install Flet
-        run: |
-          python -m pip install --upgrade pip setuptools wheel build
-          python -m pip install --upgrade flet
-
-      - name: Run Flutter doctor (verbose)
-        run: |
-          flutter doctor -v || true
-          flutter doctor --android-licenses || true
-
+      # flet build scarica da solo la versione di Flutter che gli serve;
+      # gli rispondiamo "sì" in automatico (niente tastiera in CI).
       - name: Costruisci APK
-        run: echo "y" | flet build apk --verbose
+        run: |
+          for i in $(seq 200); do echo y; done > yes.txt
+          flet build apk --verbose < yes.txt
 
       - name: Raccogli l'APK
         run: |
