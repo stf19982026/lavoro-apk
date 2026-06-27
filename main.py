@@ -77,7 +77,7 @@ def _build(page: ft.Page):
                                 ft.dropdown.Option("asc", "Meno recenti")],
                        on_select=lambda e: (stato.update(sort=e.control.value), render()))
     chips_row = ft.Row(wrap=True, spacing=6, run_spacing=6)
-    lista = ft.Column(spacing=9, scroll="auto", expand=True)
+    lista = ft.Column(spacing=9)
     status = ft.Text("", size=11, color=INK_SOFT)
     refresh_btn = ft.IconButton(_ic("REFRESH"), tooltip="Aggiorna", icon_color=INK,
                                 on_click=lambda e: refresh())
@@ -123,7 +123,9 @@ def _build(page: ft.Page):
     def apri(u):
         if u:
             try:
-                page.launch_url(u)
+                # launch_url è asincrono in Flet 0.85: va eseguito come task,
+                # con target BLANK per aprire il browser esterno su Android
+                page.run_task(page.launch_url, u, web_popup_window_name=ft.UrlTarget.BLANK)
             except Exception:
                 pass
 
@@ -207,11 +209,13 @@ def _build(page: ft.Page):
                 pass
 
     # layout: niente ListView(expand) problematico, uso Column scrollabile
+    # tutta la pagina scorre: i filtri non restano fissi e l'elenco scorre per intero
+    page.scroll = ft.ScrollMode.AUTO
     page.add(
         ft.Container(ft.Column([search, ft.Row([sort]), chips_row], spacing=8),
                     padding=ft.Padding(left=12, top=8, right=12, bottom=4)),
         ft.Divider(height=1, color=LINE),
-        ft.Container(lista, expand=True, padding=ft.Padding(left=10, top=4, right=10, bottom=0)),
+        ft.Container(lista, padding=ft.Padding(left=10, top=4, right=10, bottom=0)),
         ft.Container(status, padding=ft.Padding(left=14, top=6, right=14, bottom=6)),
     )
     page.update()
