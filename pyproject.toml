@@ -3,7 +3,8 @@ name = "rassegna-lavoro"
 version = "1.0.0"
 description = "Rassegna normativa del lavoro"
 requires-python = ">=3.9"
-dependencies = ["flet", "feedparser", "requests", "beautifulsoup4"]
+# NB: 'flet' NON va elencato qui (lo fornisce il build). Solo le librerie extra.
+dependencies = ["requests", "beautifulsoup4"]
 
 [tool.flet]
 org = "it.consulentedellavoro"
