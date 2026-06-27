@@ -3,8 +3,9 @@ name = "rassegna-lavoro"
 version = "1.0.0"
 description = "Rassegna normativa del lavoro"
 requires-python = ">=3.9"
-# NB: 'flet' NON va elencato qui (lo fornisce il build). Solo le librerie extra.
-dependencies = ["requests", "beautifulsoup4"]
+# 'flet' DEVE esserci (l'app fa "import flet" a runtime).
+# 'feedparser' resta FUORI: era lui a causare il conflitto di dipendenze.
+dependencies = ["flet", "requests", "beautifulsoup4"]
 
 [tool.flet]
 org = "it.consulentedellavoro"
