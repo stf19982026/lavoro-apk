@@ -54,6 +54,14 @@ def _build(page: ft.Page):
     nuovi_uid = set()
     store = getattr(page, "client_storage", None)
 
+    # UrlLauncher va registrato come SERVIZIO della pagina, altrimenti su Android
+    # non comunica col sistema e i link non si aprono.
+    url_launcher = ft.UrlLauncher()
+    try:
+        page.services.append(url_launcher)
+    except Exception:
+        pass
+
     def carica_visti():
         try:
             v = store.get("visti") if store else None
@@ -121,13 +129,19 @@ def _build(page: ft.Page):
         page.update()
 
     def apri(u):
-        if u:
-            try:
-                # launch_url è asincrono in Flet 0.85: va eseguito come task,
-                # con target BLANK per aprire il browser esterno su Android
-                page.run_task(page.launch_url, u, web_popup_window_name=ft.UrlTarget.BLANK)
-            except Exception:
-                pass
+        if not u:
+            return
+        # 1) servizio UrlLauncher registrato, browser esterno (via affidabile su Android)
+        try:
+            page.run_task(url_launcher.launch_url, u, mode=ft.LaunchMode.EXTERNAL_APPLICATION)
+            return
+        except Exception:
+            pass
+        # 2) fallback: scorciatoia della pagina
+        try:
+            page.run_task(page.launch_url, u)
+        except Exception:
+            pass
 
     def card(it):
         badge = ft.Container(
