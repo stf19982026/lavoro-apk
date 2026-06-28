@@ -17,6 +17,12 @@ import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
+import ssl
+from requests.adapters import HTTPAdapter
+try:
+    from urllib3.util.ssl_ import create_urllib3_context
+except Exception:
+    create_urllib3_context = None
 
 
 def gnews(query):
@@ -51,8 +57,6 @@ SOURCES = [
      "color": "#b5451f"},
     {"id": "dpl-news", "ente": "Diritto del Lavoro", "code": "CCNL", "categoria": "Approfondimenti / CCNL",
      "tipo": "rss", "url": "https://www.dottrinalavoro.it/feed", "color": "#9a6a16"},
-    {"id": "ntplus-lavoro", "ente": "NT+ Lavoro", "code": "NT+", "categoria": "Prima pagina",
-     "tipo": "scrape_ntplus", "url": "https://ntpluslavoro.ilsole24ore.com/", "color": "#b0306a"},
     {"id": "assimpredil-normative", "ente": "Assimpredil ANCE", "code": "ANCE",
      "categoria": "Novità normative", "tipo": "scrape_assimpredil",
      "url": "https://portale.assimpredilance.it/categorie/novita-normative", "color": "#b91c1c"},
@@ -64,6 +68,33 @@ HEADERS = {
     "Accept-Language": "it-IT,it;q=0.9",
 }
 TIMEOUT = 20
+
+
+class _TLSAdapter(HTTPAdapter):
+    """Abbassa il security level TLS: serve per il portale INAIL, che con il
+    livello di default dà 'SSLV3_ALERT_HANDSHAKE_FAILURE'."""
+    def init_poolmanager(self, *args, **kwargs):
+        if create_urllib3_context is not None:
+            try:
+                ctx = create_urllib3_context(ciphers="DEFAULT@SECLEVEL=1")
+                ctx.check_hostname = True
+                kwargs["ssl_context"] = ctx
+            except Exception:
+                pass
+        return super().init_poolmanager(*args, **kwargs)
+
+
+def _make_session():
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    try:
+        s.mount("https://", _TLSAdapter())
+    except Exception:
+        pass
+    return s
+
+
+SESSION = _make_session()
 MESI = {"gennaio": 1, "febbraio": 2, "marzo": 3, "aprile": 4, "maggio": 5, "giugno": 6,
         "luglio": 7, "agosto": 8, "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12}
 MESI_ABBR = {"gen": 1, "feb": 2, "mar": 3, "apr": 4, "mag": 5, "giu": 6,
@@ -135,7 +166,10 @@ def _data_feed(s):
 
 def fetch_rss(src):
     """Legge RSS 2.0 o Atom con la libreria standard (niente feedparser)."""
-    r = requests.get(src["url"], headers=HEADERS, timeout=TIMEOUT)
+    try:
+        r = SESSION.get(src["url"], timeout=TIMEOUT)
+    except Exception:
+        r = requests.get(src["url"], headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
     try:
         root = ET.fromstring(r.content)
@@ -170,7 +204,10 @@ def fetch_rss(src):
 
 
 def fetch_html(url):
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    try:
+        r = SESSION.get(url, timeout=TIMEOUT)
+    except Exception:
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
     r.encoding = r.apparent_encoding or "utf-8"
     return BeautifulSoup(r.text, "html.parser")
@@ -195,26 +232,56 @@ def scrape_inl(src):
     return items[:40]
 
 
+def _oggetto_inail(a, next_a):
+    """Oggetto = testo tra il link-titolo e la circolare successiva."""
+    from bs4 import NavigableString, Tag
+    own = {id(x) for x in a.descendants}
+    parts, tot = [], 0
+    for el in a.next_elements:
+        if id(el) in own:
+            continue
+        if next_a is not None and el is next_a:
+            break
+        if isinstance(el, Tag) and el.name == "a" \
+                and "circolare inail" in el.get_text(" ", strip=True).lower():
+            break
+        if isinstance(el, NavigableString):
+            t = str(el).strip()
+            if t:
+                parts.append(t)
+                tot += len(t)
+                if tot > 500:
+                    break
+    testo = " ".join(parts)
+    testo = re.sub(r"circolare inail", " ", testo, flags=re.I)
+    testo = re.sub(r"\d{1,2}\s+[a-z\u00e0]+\s+\d{4}", " ", testo, flags=re.I)
+    testo = re.sub(r"\d{1,2}\s+[a-z]{3}\.?\s+\d{4}", " ", testo, flags=re.I)
+    testo = re.sub(r"^\W*n\.\s*\d+\W*", " ", testo)
+    testo = ripulisci(testo, 280).strip(" \u00b7-\u2014.,")
+    return testo if len(testo) > 12 else ""
+
+
 def scrape_inail(src):
+    """Circolari INAIL dalla pagina indicata (via SESSION, TLS abbassato):
+    titolo, data dal titolo, link al dettaglio e breve oggetto."""
     items, seen = [], set()
     soup = fetch_html(src["url"])
-    main = soup.find("main") or soup
-    blocchi = main.find_all(["article", "li"]) or main.find_all("div")
-    for b in blocchi:
-        testo = b.get_text(" ", strip=True)
-        if "circolare" not in testo.lower():
+    links = []
+    for a in soup.find_all("a", href=True):
+        t = a.get_text(" ", strip=True)
+        if "circolare inail" in t.lower() and parse_data_estesa(t):
+            links.append(a)
+    for i, a in enumerate(links):
+        titolo = ripulisci(a.get_text(" ", strip=True), 200)
+        full = requests.compat.urljoin(src["url"], a["href"])
+        if full in seen:
             continue
-        data = parse_data_estesa(testo)
-        a = b.find("a", href=True)
-        link = requests.compat.urljoin(src["url"], a["href"]) if a else src["url"]
-        oggetto = re.sub(r"circolare inail", "", testo, flags=re.I)
-        oggetto = re.sub(r"\d{1,2}\s+[a-zà]+\s+\d{4}", "", oggetto, flags=re.I).strip(" ·-")
-        oggetto = ripulisci(oggetto, 280) or "Circolare INAIL"
-        if oggetto[:60] in seen:
-            continue
-        seen.add(oggetto[:60])
-        items.append(make_item(src, oggetto, link, data, ""))
-    return items[:40]
+        seen.add(full)
+        data = parse_data_estesa(titolo)
+        next_a = links[i + 1] if i + 1 < len(links) else None
+        oggetto = _oggetto_inail(a, next_a)
+        items.append(make_item(src, titolo, full, data, oggetto))
+    return items[:80]
 
 
 def scrape_assimpredil(src):
@@ -244,58 +311,6 @@ def scrape_assimpredil(src):
     return items[:40]
 
 
-def _next_data_articoli(obj, out):
-    if isinstance(obj, dict):
-        titolo = obj.get("title") or obj.get("titolo") or obj.get("headline")
-        slug = (obj.get("url") or obj.get("urlId") or obj.get("slug")
-                or obj.get("link") or obj.get("permalink") or obj.get("id"))
-        if isinstance(titolo, str) and isinstance(slug, str) and len(titolo) > 8:
-            url = slug if slug.startswith("http") else \
-                "https://ntpluslavoro.ilsole24ore.com/art/" + slug.strip("/").split("/")[-1]
-            data = None
-            for k in ("datePublished", "dataPub", "date", "data", "pubDate", "dataPubblicazione", "publishedAt"):
-                data = parse_data_iso(obj.get(k)) or parse_data_estesa(str(obj.get(k) or ""))
-                if data:
-                    break
-            summ = (obj.get("abstract") or obj.get("summary") or obj.get("sommario")
-                    or obj.get("occhiello") or obj.get("description") or obj.get("strillo") or "")
-            out.append((titolo.strip(), url, data, ripulisci(str(summ))))
-        for v in obj.values():
-            _next_data_articoli(v, out)
-    elif isinstance(obj, list):
-        for v in obj:
-            _next_data_articoli(v, out)
-
-
-def scrape_ntplus(src):
-    r = requests.get(src["url"], headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
-    r.encoding = r.apparent_encoding or "utf-8"
-    testo = r.text
-    trovati = []
-    m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', testo, re.S)
-    if m:
-        try:
-            _next_data_articoli(json.loads(m.group(1)), trovati)
-        except Exception:
-            pass
-    if not trovati:
-        soup = BeautifulSoup(testo, "html.parser")
-        for a in soup.find_all("a", href=True):
-            if "/art/" not in a["href"]:
-                continue
-            titolo = a.get_text(" ", strip=True)
-            if titolo and len(titolo) > 10:
-                trovati.append((titolo, requests.compat.urljoin(src["url"], a["href"]), None, ""))
-    items, seen = [], set()
-    for titolo, url, data, summ in trovati:
-        if url in seen:
-            continue
-        seen.add(url)
-        items.append(make_item(src, titolo, url, data, summ))
-    return items[:40]
-
-
 def make_item(src, titolo, url, data, summary):
     titolo = ripulisci(titolo, 220) or "(senza titolo)"
     return {
@@ -309,7 +324,7 @@ def make_item(src, titolo, url, data, summary):
 
 
 FETCHERS = {"rss": fetch_rss, "scrape_inl": scrape_inl, "scrape_inail": scrape_inail,
-            "scrape_assimpredil": scrape_assimpredil, "scrape_ntplus": scrape_ntplus}
+            "scrape_assimpredil": scrape_assimpredil}
 
 
 def raccogli(giorni=None, on_log=None):
